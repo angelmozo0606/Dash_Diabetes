@@ -17,7 +17,7 @@ from train_models import ART, DATA, FEATURES, RENAME, TARGET, train
 APP_TITLE = "GlucoRisk"
 TEAM = [  
     dict(name="Angel Mozo", github="https://github.com/angelmozo0606", linkedin="https://www.linkedin.com/in/angel-mozo-24053b441/?isSelfProfile=true"),
-    dict(name="Abran Basto", github="https://github.com/", linkedin="https://www.linkedin.com/"),
+    dict(name="Abran Basto", github="https://github.com/abrahanb123", linkedin="https://www.linkedin.com/in/abraham-basto-28048631a/"),
 ]
 VIDEO_URL = ""  # ← ej. "https://drive.google.com/file/d/<ID>/preview"
 POP_PREVALENCE = 0.139  
