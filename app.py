@@ -1,5 +1,4 @@
 
-import base64
 import json
 from pathlib import Path
 
@@ -23,11 +22,12 @@ VIDEO_URL = ""  # ← ej. "https://drive.google.com/file/d/<ID>/preview"
 POP_PREVALENCE = 0.139  
 
 
-INK, PANEL, PANEL2, LINE = "#0c1730", "#13213f", "#182a4f", "#24365e"
-FG, MUTED = "#eef2fb", "#8fa0c2"
-ROSE, TEAL, AMBER = "#ff5c8a", "#3ddbc4", "#ffb547"
-SANS = "Manrope, system-ui, sans-serif"
-SERIF = "Fraunces, Georgia, serif"
+# Paleta: rojo sangre (con diabetes), azul (sin diabetes) y amarillo glucosa como apoyo.
+INK, PANEL, PANEL2, LINE = "#150e1f", "#221832", "#2d2142", "#3a2c50"
+FG, MUTED = "#f4eef8", "#b3a6c4"
+ROSE, TEAL, AMBER = "#ff4757", "#4a8af0", "#f5a524"
+SANS = "Figtree, 'Segoe UI', Arial, sans-serif"
+SERIF = "'Bricolage Grotesque', Figtree, sans-serif"
 GROUP_COLORS = {0: TEAL, 1: ROSE}
 GROUP_NAMES = {0: "Sin diabetes", 1: "Con diabetes / prediabetes"}
 
@@ -99,18 +99,33 @@ DF = RAW.rename(columns=RENAME)[[TARGET] + FEATURES].drop_duplicates().reset_ind
 DF = DF.astype(float)
 DF[TARGET] = DF[TARGET].astype(int)
 N = len(DF)
+N_POS_RAW = int((RAW["Diabetes_binary"] == 1).sum())
+N_NEG_RAW = int((RAW["Diabetes_binary"] == 0).sum())
+SHARE_POS = DF[TARGET].mean()
+
+
+def _single_thread(models):
+    for m in models.values():  # predicción de una sola fila: evitar overhead de hilos
+        est = m.steps[-1][1] if hasattr(m, "steps") else m
+        if hasattr(est, "n_jobs"):
+            est.set_params(n_jobs=1)
 
 
 def load_artifacts():
     try:
         models = joblib.load(ART / "models.joblib")
-        metrics = json.loads((ART / "metrics.json").read_text())
+        raw_json = (ART / "metrics.json").read_bytes()
+        try:
+            metrics = json.loads(raw_json.decode("utf-8"))
+        except UnicodeDecodeError:  # archivo guardado en Windows (cp1252)
+            metrics = json.loads(raw_json.decode("cp1252"))
+        _single_thread(models)
+        sample = DF[FEATURES].head(2)
+        for m in models.values():  # verifica que los modelos funcionan con las versiones instaladas
+            m.predict_proba(sample)
     except Exception:  # artefactos ausentes o versión incompatible → reentrenar
         models, metrics = train()
-    for m in models.values():  # predicción de una sola fila: evitar overhead de hilos
-        est = m.steps[-1][1] if hasattr(m, "steps") else m
-        if hasattr(est, "n_jobs"):
-            est.set_params(n_jobs=1)
+        _single_thread(models)
     return models, metrics
 
 
@@ -356,13 +371,13 @@ def fig_funnel():
         y=["Registros originales", "Tras eliminar duplicados", "Entrenamiento (80%)", "Prueba (20%)"],
         x=[m["n_raw"], m["n_clean"], m["n_train"], m["n_test"]],
         marker=dict(color=[MUTED, TEAL, ROSE, AMBER]),
-        texttemplate="%{value:,}", textfont=dict(color=INK, family=SANS, size=13),
+        texttemplate="%{value:,}", textfont=dict(color="#ffffff", family=SANS, size=13),
         connector=dict(fillcolor=PANEL2, line=dict(color=LINE))))
     return base_layout(fig, h=320, legend=False)
 
 
 
-MODEL_COLORS = [ROSE, TEAL, AMBER, "#8b9dff", "#c792ea", MUTED]
+MODEL_COLORS = [ROSE, TEAL, AMBER, "#2ecc9a", "#b57bff", MUTED]
 
 
 def fig_roc():
@@ -378,7 +393,7 @@ def fig_roc():
     fig.update_yaxes(title="Tasa de verdaderos positivos (recall)", range=[0, 1.02])
     base_layout(fig, h=420)
     fig.update_layout(margin=dict(t=10), legend=dict(orientation="v", x=0.98, xanchor="right", y=0.04,
-                                                     yanchor="bottom", bgcolor="rgba(19,33,63,.85)"))
+                                                     yanchor="bottom", bgcolor="rgba(34,24,50,.92)"))
     return fig
 
 
@@ -411,7 +426,7 @@ def fig_confusion(name):
     text = [[f"{cm[i, j]:,}<br>{pct[i, j]:.1f}%".replace(",", " ") for j in range(2)] for i in range(2)]
     fig = go.Figure(go.Heatmap(z=pct, x=labels, y=labels, text=text, texttemplate="%{text}",
                                textfont=dict(size=15, color=FG), showscale=False,
-                               colorscale=[[0, PANEL], [1, ROSE]], zmin=0, zmax=100,
+                               colorscale=[[0, PANEL2], [1, "#b8283a"]], zmin=0, zmax=100,
                                hovertemplate="Real: %{y}<br>Predicho: %{x}<extra></extra>"))
     fig.update_xaxes(title="Predicción", side="bottom")
     fig.update_yaxes(title="Valor real", autorange="reversed")
@@ -468,12 +483,12 @@ def adjust_prior(p, prior=POP_PREVALENCE):
 
 def fig_gauge(p):
     fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=p * 100, number=dict(suffix="%", font=dict(family=SERIF, size=46, color=FG)),
+        mode="gauge+number", value=p * 100, number=dict(suffix="%", font=dict(family=SERIF, size=42, color=FG)),
         gauge=dict(axis=dict(range=[0, 100], tickcolor=MUTED, tickfont=dict(color=MUTED)),
-                   bar=dict(color=FG, thickness=0.22), bgcolor=PANEL2, borderwidth=0,
-                   steps=[dict(range=[0, 35], color="rgba(61,219,196,.35)"),
-                          dict(range=[35, 65], color="rgba(255,181,71,.35)"),
-                          dict(range=[65, 100], color="rgba(255,92,138,.4)")])))
+                   bar=dict(color=FG, thickness=0.2), bgcolor=PANEL2, borderwidth=0,
+                   steps=[dict(range=[0, 35], color="rgba(74,138,240,.25)"),
+                          dict(range=[35, 65], color="rgba(245,165,36,.25)"),
+                          dict(range=[65, 100], color="rgba(255,71,87,.28)")])))
     base_layout(fig, h=250, legend=False)
     fig.update_layout(margin=dict(l=36, r=36, t=24, b=0))
     return fig
@@ -506,95 +521,93 @@ def fig_all_models(row):
     return base_layout(fig, h=280, legend=False)
 
 
-NAV_ITEMS = [("Inicio", "/"), ("Contexto", "/contexto"), ("Exploratorio", "/exploratorio"),
-             ("Modelos", "/modelos"), ("Predicción", "/prediccion"), ("Aplicaciones", "/aplicaciones")]
+NAV_ITEMS = [("Inicio", "/"), ("Contexto", "/contexto"), ("Marco teórico", "/marco-teorico"),
+             ("Metodología", "/metodologia"),
+             ("Exploratorio", "/exploratorio"), ("Modelos", "/modelos"), ("Predicción", "/prediccion"),
+             ("Aplicaciones", "/aplicaciones")]
 
 NAVBAR = html.Header(html.Div([
-    dcc.Link([html.Div(className="brand-mark"), html.Span(APP_TITLE, className="brand-name")],
+    dcc.Link([html.Span(className="brand-mark"), html.Span(APP_TITLE, className="brand-name")],
              href="/", className="brand"),
     html.Nav([dcc.Link(t, href=h, id=f"nav-{i}", className="nav-link") for i, (t, h) in enumerate(NAV_ITEMS)],
              className="nav"),
 ], className="topbar-inner"), className="topbar")
 
 FOOTER = html.Footer([
-    html.Span(f"{APP_TITLE} · Proyecto académico de analítica predictiva"),
-    html.Span("Datos: CDC BRFSS 2015 (Kaggle, Alex Teboul)"),
+    html.Span(f"{APP_TITLE} — proyecto académico de visualización y analítica predictiva."),
+    html.Span("Datos: CDC, BRFSS 2015 (versión de A. Teboul en Kaggle)."),
 ], className="footer")
 
 
-def hero_curve_svg():
-    """Curva real: % con diabetes por grupo de edad (se dibuja una vez al cargar)."""
-    w, h, pad = 560, 230, 24
-    xs = np.linspace(pad, w - pad, len(PREV_AGE))
-    ys = h - pad - (PREV_AGE.values) * (h - 2 * pad)
-    pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
-    area = f"{xs[0]:.1f},{h - pad} " + pts + f" {xs[-1]:.1f},{h - pad}"
-    grid = "".join(
-        f'<line x1="{pad}" x2="{w - pad}" y1="{h - pad - g * (h - 2 * pad):.1f}" y2="{h - pad - g * (h - 2 * pad):.1f}" '
-        f'stroke="{LINE}" stroke-width="1"/><text x="{w - pad}" y="{h - pad - g * (h - 2 * pad) - 5:.1f}" '
-        f'fill="{MUTED}" font-size="11" text-anchor="end" font-family="Manrope,sans-serif">{int(g * 100)}%</text>'
-        for g in (0.25, 0.5, 0.75))
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}">
-<style>
-.p{{stroke-dasharray:1400;stroke-dashoffset:1400;animation:d 2.6s ease-out .3s forwards}}
-.a{{opacity:0;animation:o 1s ease-out 1.8s forwards}}
-.t{{opacity:0;animation:o .4s ease-out 2.7s forwards}}
-@keyframes d{{to{{stroke-dashoffset:0}}}} @keyframes o{{to{{opacity:1}}}}
-@media (prefers-reduced-motion:reduce){{.p{{animation:none;stroke-dashoffset:0}}.a,.t{{animation:none;opacity:1}}}}
-</style>
-{grid}
-<polygon class="a" points="{area}" fill="{ROSE}" fill-opacity="0.10"/>
-<polyline class="p" points="{pts}" fill="none" stroke="{ROSE}" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
-<circle class="t" cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="6" fill="{ROSE}" stroke="{INK}" stroke-width="3"/>
-<circle class="t" cx="{xs[0]:.1f}" cy="{ys[0]:.1f}" r="5" fill="{TEAL}" stroke="{INK}" stroke-width="3"/>
-</svg>"""
-    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+def fig_prev_age():
+    x = [AGE_LABELS[int(k)] for k in PREV_AGE.index]
+    y = PREV_AGE.values * 100
+    fig = go.Figure(go.Scatter(x=x, y=y, mode="lines+markers", line=dict(color=ROSE, width=3, shape="spline"),
+                               marker=dict(size=8, color=ROSE, line=dict(color=PANEL, width=2)),
+                               fill="tozeroy", fillcolor="rgba(255,71,87,.12)",
+                               hovertemplate="%{x}: %{y:.1f}% con diabetes o prediabetes<extra></extra>"))
+    fig.add_hline(y=SHARE_POS * 100, line_dash="dot", line_color=MUTED,
+                  annotation_text="promedio de la muestra", annotation_font_color=MUTED,
+                  annotation_position="bottom right")
+    fig.update_yaxes(title="% con diabetes o prediabetes", range=[0, 100], ticksuffix="%")
+    fig.update_xaxes(title="Grupo de edad", tickangle=-45, showgrid=False)
+    return base_layout(fig, h=320, legend=False)
 
 
 def page_home():
     p_young, p_old = PREV_AGE.iloc[0] * 100, PREV_AGE.max() * 100
-    hero = html.Div([
+    hero = html.Section([
         html.Div([
-            html.H1("¿Quién está en riesgo de diabetes?"),
-            html.P(f"Indicadores de salud de {fmt_int(N)} adultos de la encuesta BRFSS 2015 y seis modelos de "
-                   "clasificación para estimar el riesgo de diabetes o prediabetes a partir de hábitos, "
-                   "antecedentes y condiciones socioeconómicas.", className="hero-lead"),
+            html.Span("BRFSS 2015 · 6 modelos de machine learning", className="pill"),
+            html.H1(["La diabetes no da aviso.", html.Br(), html.Span("Los datos sí.", className="hl")]),
+            html.P(f"Analizamos {fmt_int(N)} perfiles de salud de adultos en EE. UU. para entender qué hábitos y "
+                   "condiciones se asocian con la diabetes y la prediabetes, y construimos un modelo que estima "
+                   "ese riesgo con preguntas de una encuesta, sin exámenes de laboratorio.", className="hero-lead"),
             html.Div([
-                dcc.Link("Calcular un riesgo", href="/prediccion", className="btn btn-primary"),
-                dcc.Link("Explorar los datos", href="/exploratorio", className="btn btn-ghost"),
+                dcc.Link("Calcular un riesgo →", href="/prediccion", className="btn btn-primary"),
+                dcc.Link("Ver la metodología", href="/metodologia", className="btn btn-light"),
             ], className="cta-row"),
-        ]),
-        html.Div([
-            html.Img(src=hero_curve_svg(), alt="Curva de prevalencia de diabetes por grupo de edad",
-                     style={"width": "100%"}),
-            html.Div([html.Span(f"18–24 años: {p_young:.0f}%"), html.Span(f"Máximo: {p_old:.0f}%")],
-                     className="pulse-legend"),
-            html.P("Proporción con diabetes o prediabetes según grupo de edad, en la muestra balanceada.",
-                   className="note"),
-        ], className="pulse-card"),
+        ], className="hero-text"),
+        html.Div(html.Iframe(src="/assets/gota.html", className="drop-frame",
+                             title="Gota de sangre interactiva: niveles de glucosa"),
+                 className="hero-visual"),
     ], className="hero")
 
     facts = html.Div([
-        html.Div([html.B(fmt_int(N)), html.Span("registros únicos")], className="fact"),
-        html.Div([html.B("21"), html.Span("variables predictoras")], className="fact"),
-        html.Div([html.B("6"), html.Span("modelos comparados")], className="fact"),
-        html.Div([html.B(f"{BEST_ROW['auc']:.3f}"), html.Span(f"ROC-AUC de {BEST}")], className="fact"),
+        html.Div([html.B(fmt_int(N)), html.Span("perfiles analizados")], className="fact"),
+        html.Div([html.B("50 / 50"), html.Span("con y sin diabetes: muestra balanceada")], className="fact"),
+        html.Div([html.B("21"), html.Span("indicadores de salud y hábitos")], className="fact"),
+        html.Div([html.B(f"{BEST_ROW['auc']:.2f}"), html.Span(f"ROC-AUC del mejor modelo ({BEST})")],
+                 className="fact"),
     ], className="facts")
 
-    routes = html.Div([
-        dcc.Link([html.H4("Contexto"), html.P("El problema, la fuente de los datos y el diccionario de variables.")],
-                 href="/contexto", className="route"),
-        dcc.Link([html.H4("Exploratorio"), html.P("Distribuciones, pruebas de asociación y el proceso ETL.")],
-                 href="/exploratorio", className="route"),
-        dcc.Link([html.H4("Modelos"), html.P("Curvas ROC, matrices de confusión e importancia de variables.")],
-                 href="/modelos", className="route"),
-        dcc.Link([html.H4("Aplicaciones"), html.P("Dónde puede servir un modelo así y cuáles son sus límites.")],
-                 href="/aplicaciones", className="route"),
-    ], className="grid-4", style={"marginTop": "34px"})
+    age = html.Div([
+        section_head("El riesgo crece con la edad",
+                     f"En la muestra, la proporción con diabetes o prediabetes pasa de {p_young:.0f}% entre los "
+                     f"18 y 24 años a {p_old:.0f}% en su punto más alto. Como la muestra está balanceada, sirve "
+                     "para comparar grupos, no como prevalencia real."),
+        panel(graph(fig_prev_age())),
+    ], className="section")
 
-    people = [html.Div([html.B(p["name"]), html.Div([
-        html.A("GitHub", href=p["github"], target="_blank", className="btn btn-ghost btn-small"),
-        html.A("LinkedIn", href=p["linkedin"], target="_blank", className="btn btn-ghost btn-small"),
+    cards = [
+        ("Contexto", "/contexto", "El problema, la fuente de datos y el diccionario de variables."),
+        ("Marco teórico", "/marco-teorico", "La enfermedad, la encuesta BRFSS, los modelos y las métricas."),
+        ("Metodología", "/metodologia", "Fases del proyecto, diseño experimental y pruebas estadísticas."),
+        ("Exploratorio", "/exploratorio", "Distribuciones, pruebas de asociación y preparación de datos."),
+        ("Modelos", "/modelos", "Curvas ROC, matrices de confusión e importancia de variables."),
+        ("Predicción", "/prediccion", "Arma un perfil y mira cómo cambia el riesgo."),
+        ("Aplicaciones", "/aplicaciones", "Dónde puede usarse un modelo así y cuáles son sus límites."),
+        ("Referencias", "/metodologia", "Fuentes científicas y técnicas del trabajo."),
+    ]
+    routes = html.Div([
+        section_head("Recorre el proyecto"),
+        html.Div([dcc.Link([html.H4(t), html.P(d), html.Span("Abrir →", className="go")], href=h,
+                           className="route") for t, h, d in cards], className="grid-4"),
+    ], className="section")
+
+    people = [html.Div([html.Div(p["name"][0], className="avatar"), html.B(p["name"]), html.Div([
+        html.A("GitHub", href=p["github"], target="_blank"),
+        html.A("LinkedIn", href=p["linkedin"], target="_blank"),
     ], className="person-links")], className="person") for p in TEAM]
     video = (html.Iframe(src=VIDEO_URL, className="video-box", allow="autoplay") if VIDEO_URL else
              html.Div("Agrega el enlace del video explicativo en la variable VIDEO_URL de app.py.",
@@ -604,7 +617,7 @@ def page_home():
         html.Div([panel(people, title="Integrantes"), panel(video, title="Video explicativo")],
                  className="grid-side"),
     ], className="section")
-    return html.Div([hero, facts, routes, team])
+    return html.Div([hero, facts, age, routes, team])
 
 
 def page_context():
@@ -648,6 +661,182 @@ def page_context():
             ], className="grid-3"),
         ], className="section"),
     ])
+
+HYPERPARAMS = [
+    ("XGBoost", "400 árboles, tasa de aprendizaje 0.05, profundidad máx. 5, subsample 0.8, colsample 0.8, min_child_weight 5"),
+    ("Random Forest", "200 árboles, profundidad máx. 14, mínimo 10 observaciones por hoja"),
+    ("Regresión Logística", "Variables estandarizadas, regularización L2 por defecto (C = 1), máx. 2000 iteraciones"),
+    ("Árbol de Decisión", "Profundidad máx. 8, mínimo 50 observaciones por hoja"),
+    ("KNN", "Variables estandarizadas, k = 35 vecinos, distancia euclidiana"),
+    ("Naive Bayes", "Gaussiano, sin ajuste de hiperparámetros"),
+]
+
+REFERENCES = [
+    "American Diabetes Association Professional Practice Committee. (2024). 2. Diagnosis and classification of "
+    "diabetes: Standards of Care in Diabetes—2024. Diabetes Care, 47(Suppl. 1), S20–S42.",
+    "Breiman, L. (2001). Random forests. Machine Learning, 45(1), 5–32.",
+    "Centers for Disease Control and Prevention. (2016). Behavioral Risk Factor Surveillance System: 2015 "
+    "survey data and documentation. U.S. Department of Health and Human Services.",
+    "Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. Proceedings of the 22nd ACM "
+    "SIGKDD International Conference on Knowledge Discovery and Data Mining, 785–794.",
+    "Chapman, P., et al. (2000). CRISP-DM 1.0: Step-by-step data mining guide. SPSS Inc.",
+    "Fawcett, T. (2006). An introduction to ROC analysis. Pattern Recognition Letters, 27(8), 861–874.",
+    "Hastie, T., Tibshirani, R., & Friedman, J. (2009). The elements of statistical learning (2.ª ed.). Springer.",
+    "Pedregosa, F., et al. (2011). Scikit-learn: Machine learning in Python. Journal of Machine Learning "
+    "Research, 12, 2825–2830.",
+    "Saerens, M., Latinne, P., & Decaestecker, C. (2002). Adjusting the outputs of a classifier to new a priori "
+    "probabilities: A simple procedure. Neural Computation, 14(1), 21–41.",
+    "Teboul, A. (2021). Diabetes Health Indicators Dataset [Conjunto de datos]. Kaggle.",
+    "Xie, Z., Nikolayeva, O., Luo, J., & Li, D. (2019). Building risk prediction models for type 2 diabetes using "
+    "machine learning techniques. Preventing Chronic Disease, 16, E130.",
+]
+
+
+def md(text):
+    return dcc.Markdown(text, mathjax=True, className="prose")
+
+
+def page_theory():
+    theory = html.Div([
+        section_head("Marco teórico",
+                     "Conceptos en los que se apoya el análisis: la enfermedad, la fuente de datos y las "
+                     "técnicas de clasificación y evaluación."),
+        html.Div([
+            html.H3("Diabetes tipo 2 y prediabetes"),
+            md("La diabetes mellitus tipo 2 es una enfermedad crónica en la que el organismo no utiliza bien la "
+               "insulina (resistencia a la insulina) y, con el tiempo, la produce en cantidad insuficiente. "
+               "El resultado es una glucosa en sangre persistentemente alta que daña vasos sanguíneos, riñones, "
+               "retina y nervios. La **prediabetes** es el estado intermedio: la glucosa está por encima de lo "
+               "normal sin alcanzar el umbral diagnóstico.\n\n"
+               "Según los criterios de la American Diabetes Association, se habla de prediabetes con una "
+               "hemoglobina glicosilada (HbA1c) entre 5.7% y 6.4% o una glucosa en ayunas entre 100 y 125 mg/dL, "
+               "y de diabetes con HbA1c ≥ 6.5% o glucosa en ayunas ≥ 126 mg/dL. Como ambas fases pueden pasar "
+               "años sin síntomas, el **tamizaje** —identificar a quién conviene hacerle esas pruebas— es una "
+               "estrategia central de prevención."),
+            html.H3("Factores de riesgo"),
+            md("La literatura distingue factores **no modificables** (edad, antecedentes familiares, sexo) y "
+               "**modificables** (exceso de peso, inactividad física, dieta, tabaquismo). La hipertensión y el "
+               "colesterol alto suelen aparecer junto con la diabetes como parte del síndrome metabólico, y las "
+               "condiciones socioeconómicas (ingresos, educación, acceso a servicios de salud) influyen en la "
+               "exposición a estos factores y en el diagnóstico oportuno. Las 21 variables del conjunto de datos "
+               "cubren estos tres grupos, lo que permite estudiar su relación con la enfermedad sin usar "
+               "exámenes de laboratorio."),
+            html.H3("La encuesta BRFSS"),
+            md("El *Behavioral Risk Factor Surveillance System* es una encuesta telefónica anual del CDC sobre "
+               "conductas de riesgo, enfermedades crónicas y uso de servicios de salud en adultos de EE. UU. "
+               "Todas las respuestas son **autorreportadas**. A. Teboul depuró la edición 2015, seleccionó 21 "
+               "indicadores y publicó en Kaggle una versión **balanceada 50/50** con "
+               f"{fmt_int(N_POS_RAW + N_NEG_RAW)} respuestas: {fmt_int(N_POS_RAW)} con diabetes o prediabetes "
+               f"y {fmt_int(N_NEG_RAW)} sin ella. Esa es la versión utilizada en este proyecto."),
+            html.H3("Clasificación supervisada"),
+            md("El problema se plantea como una **clasificación binaria**: a partir de un vector de variables "
+               "$x$ se estima $P(y = 1 \\mid x)$, la probabilidad de tener diabetes o prediabetes. Se comparan "
+               "seis algoritmos con supuestos distintos:\n\n"
+               "- **Regresión logística:** modelo lineal en los log-odds, "
+               "$\\log \\frac{p}{1-p} = \\beta_0 + \\beta^\\top x$. Es la referencia por su interpretabilidad: "
+               "$e^{\\beta_j}$ es un *odds ratio*.\n"
+               "- **Árbol de decisión:** divide el espacio de variables con reglas del tipo *si IMC > 30*; fácil de "
+               "leer, pero inestable y propenso al sobreajuste.\n"
+               "- **Random Forest:** promedia muchos árboles entrenados sobre muestras *bootstrap* y subconjuntos "
+               "de variables, lo que reduce la varianza (Breiman, 2001).\n"
+               "- **XGBoost:** *gradient boosting* en el que cada árbol corrige los errores de los anteriores, "
+               "con regularización (Chen y Guestrin, 2016).\n"
+               "- **K vecinos más cercanos (KNN):** clasifica según la proporción de casos entre los $k$ "
+               "registros más parecidos; depende de la escala, por eso se estandariza.\n"
+               "- **Naive Bayes gaussiano:** aplica el teorema de Bayes suponiendo variables independientes "
+               "dentro de cada clase; sirve como línea base simple."),
+            html.H3("Balance de clases y ajuste de probabilidades"),
+            md("Entrenar con una muestra 50/50 evita que el modelo favorezca a la clase mayoritaria, pero hace "
+               "que sus probabilidades correspondan a una población donde la mitad tiene la condición. Si la "
+               "prevalencia real es $\\pi$ (≈ 13.9% en el BRFSS 2015 completo), la probabilidad se corrige "
+               "multiplicando los odds por el cociente de odds a priori (Saerens et al., 2002):\n\n"
+               "$$\\frac{p'}{1-p'} = \\frac{p}{1-p} \\cdot \\frac{\\pi / (1-\\pi)}{0.5 / 0.5}$$\n\n"
+               "La corrección cambia el valor de la probabilidad pero **no el orden** de las personas, de modo "
+               "que el ROC-AUC no se ve afectado."),
+            html.H3("Métricas de evaluación"),
+            md("Con umbral de 0.5 se construye la matriz de confusión (VP, FP, VN, FN) y de ella se derivan:\n\n"
+               "- **Exactitud** $= \\frac{VP + VN}{n}$; es interpretable porque las clases están balanceadas.\n"
+               "- **Precisión** $= \\frac{VP}{VP + FP}$: qué fracción de las alertas son casos reales.\n"
+               "- **Recall o sensibilidad** $= \\frac{VP}{VP + FN}$: qué fracción de los casos detecta el modelo.\n"
+               "- **F1**: media armónica de precisión y recall.\n"
+               "- **ROC-AUC**: área bajo la curva de sensibilidad frente a la tasa de falsos positivos para todos "
+               "los umbrales; equivale a la probabilidad de que un caso positivo al azar reciba un puntaje mayor "
+               "que uno negativo (Fawcett, 2006).\n\n"
+               "En tamizaje se priorizan el ROC-AUC y el recall, porque dejar sin detectar un caso es más costoso "
+               "que pedir una prueba adicional a un falso positivo."),
+        ], className="article"),
+    ], className="section")
+    return html.Div([theory])
+
+
+def page_method():
+    m = METRICS
+    phases = [
+        ("1. Comprensión del problema", "Definir la variable objetivo (diabetes o prediabetes = 1) y el uso "
+         "esperado: priorizar a quién hacerle pruebas, no diagnosticar."),
+        ("2. Comprensión de los datos", "Revisión del diccionario de variables del BRFSS, tipos (binarias, "
+         "ordinales, numéricas) y análisis univariado."),
+        ("3. Preparación", f"Renombrado al español, eliminación de {fmt_int(m['n_dup'])} registros duplicados, "
+         "verificación de nulos y rangos, partición estratificada."),
+        ("4. Análisis bivariado", "Pruebas de asociación de cada variable con la diabetes y correlaciones de "
+         "Spearman para detectar redundancia."),
+        ("5. Modelado", "Entrenamiento de seis clasificadores con los mismos datos de entrenamiento."),
+        ("6. Evaluación", "Métricas en el conjunto de prueba, validación cruzada, análisis de sobreajuste e "
+         "interpretación de variables."),
+        ("7. Despliegue", "Este tablero en Dash, que expone los resultados y un simulador de perfiles."),
+    ]
+    method = html.Div([
+        section_head("Metodología",
+                     "Cómo se llevó a cabo el trabajo: fases de CRISP-DM adaptadas a un proyecto académico, "
+                     "diseño experimental, pruebas estadísticas y configuración de los modelos. Los conceptos de "
+                     "base están en el marco teórico."),
+        html.Div([
+            html.Table([html.Thead(html.Tr([html.Th("Fase"), html.Th("Qué se hizo")])),
+                        html.Tbody([html.Tr([html.Td(html.B(f)), html.Td(d)]) for f, d in phases])],
+                       className="clean"),
+        ], className="table-wrap"),
+        html.Div([
+            html.H3("Diseño experimental"),
+            md(f"- **Datos:** {fmt_int(m['n_clean'])} registros únicos y 21 variables predictoras.\n"
+               f"- **Partición:** 80% entrenamiento ({fmt_int(m['n_train'])}) y 20% prueba "
+               f"({fmt_int(m['n_test'])}), estratificada por la variable objetivo y con semilla fija (42) para "
+               "que los resultados sean reproducibles.\n"
+               "- **Validación cruzada:** 5 particiones estratificadas sobre el conjunto de entrenamiento para "
+               "estimar la media y la desviación del ROC-AUC de cada modelo.\n"
+               "- **Escalado:** `StandardScaler` dentro de un `Pipeline` solo para la regresión logística y KNN, "
+               "de modo que la media y la desviación se calculan sin mirar los datos de prueba.\n"
+               "- **Sobreajuste:** se compara el AUC de entrenamiento con el de validación cruzada y prueba.\n"
+               "- **Selección:** el modelo final es el de mayor ROC-AUC en prueba."),
+            html.H3("Pruebas estadísticas del análisis exploratorio"),
+            md("- **Normalidad:** prueba de Anderson-Darling sobre las variables numéricas (IMC, días de mala "
+               "salud física y mental); ninguna es normal, por lo que se usan pruebas no paramétricas.\n"
+               "- **Numéricas frente a diabetes:** U de Mann-Whitney, con la correlación biserial por rangos "
+               "como tamaño del efecto.\n"
+               "- **Categóricas frente a diabetes:** χ² de independencia, con la V de Cramér como tamaño del "
+               "efecto (débil < 0.1, moderada < 0.3, fuerte ≥ 0.3). Con más de 69 000 registros casi todo "
+               "resulta significativo, así que la interpretación se basa en el tamaño del efecto.\n"
+               "- **Relaciones entre variables:** correlación de Spearman, adecuada para variables ordinales."),
+            html.H3("Interpretación de los modelos"),
+            md("- **Importancia por permutación** del mejor modelo: caída del ROC-AUC al desordenar cada variable, "
+               "sobre 5 000 registros de prueba y 5 repeticiones.\n"
+               "- **Odds ratios** de la regresión logística con variables estandarizadas, comparables entre sí.\n"
+               "- **Aporte local** en el simulador: coeficiente × valor estandarizado de cada variable para el "
+               "perfil ingresado."),
+            html.H3("Hiperparámetros"),
+        ], className="article"),
+        html.Div(html.Table([html.Thead(html.Tr([html.Th("Modelo"), html.Th("Configuración")])),
+                             html.Tbody([html.Tr([html.Td(n), html.Td(c)]) for n, c in HYPERPARAMS])],
+                            className="clean"), className="table-wrap"),
+        html.Div([
+            html.H3("Herramientas"),
+            md("Python con pandas y NumPy para la preparación, SciPy para las pruebas estadísticas, scikit-learn "
+               "y XGBoost para el modelado, y Dash con Plotly para este tablero. El análisis exploratorio "
+               "completo está en los notebooks del repositorio."),
+            html.H3("Referencias"),
+            html.Ol([html.Li(r) for r in REFERENCES], className="refs"),
+        ], className="article"),
+    ], className="section")
+    return html.Div([method])
 
 
 def page_eda():
@@ -865,8 +1054,13 @@ def page_apps():
     ]
     limits = [
         ("Datos autorreportados", "El diagnóstico, el peso y la talla los informa la persona; hay error de memoria y de sesgo."),
-        ("Muestra balanceada", f"En la población solo ~{POP_PREVALENCE:.0%} tiene diabetes o prediabetes. Las "
-                               "probabilidades del modelo deben ajustarse a esa prevalencia antes de usarse en la práctica."),
+        ("Muestra balanceada (50/50)",
+         f"El conjunto de datos está balanceado: {fmt_int(N_POS_RAW)} personas con diabetes o prediabetes y "
+         f"{fmt_int(N_NEG_RAW)} sin ella, exactamente 50% y 50% (tras quitar duplicados queda "
+         f"{SHARE_POS:.1%} / {1 - SHARE_POS:.1%}). Esto permite que los modelos aprendan ambas clases por igual. "
+         f"La consecuencia es que sus probabilidades parten de un 50% de casos, mientras que en la población "
+         f"general la prevalencia es cercana al {POP_PREVALENCE:.0%}; por eso, en la página de predicción también "
+         "se muestra la probabilidad corregida a esa prevalencia."),
         ("Contexto de EE.UU. 2015", "Antes de aplicarlo en Colombia habría que validarlo con datos locales, "
                                     "por ejemplo la ENSIN o registros de EPS."),
         ("Precisión moderada", f"Con precisión de {prec:.0%}, aproximadamente 1 de cada 4 alertas es un falso positivo: "
@@ -877,7 +1071,7 @@ def page_apps():
                                "Un modelo de encuesta no diagnostica, pero sí ayuda a decidir a quién evaluar primero."),
                   html.Div([panel(html.P(t), title=h) for h, t in uses], className="grid-2")], className="section"),
         html.Div([section_head("Límites a tener en cuenta"),
-                  html.Div([panel(html.P(t), title=h, cls="panel-quiet") for h, t in limits], className="grid-2")],
+                  html.Div([panel(html.P(t), title=h) for h, t in limits], className="grid-2")],
                  className="section"),
     ])
 
@@ -885,8 +1079,8 @@ def page_apps():
 
 app = dash.Dash(
     __name__, title=f"{APP_TITLE} · Predicción de diabetes", suppress_callback_exceptions=True,
-    external_stylesheets=["https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600"
-                          "&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"],
+    external_stylesheets=["https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800"
+                          "&family=Figtree:wght@400;500;600;700&display=swap"],
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
 )
 server = app.server
@@ -897,7 +1091,7 @@ app.layout = html.Div([
     html.Main([html.Div(id="page-content"), FOOTER], className="page"),
 ])
 
-PAGES = {"/": page_home, "/contexto": page_context, "/exploratorio": page_eda,
+PAGES = {"/": page_home, "/contexto": page_context, "/marco-teorico": page_theory, "/metodologia": page_method, "/exploratorio": page_eda,
          "/modelos": page_models, "/prediccion": page_predict, "/aplicaciones": page_apps}
 
 
